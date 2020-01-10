@@ -1,5 +1,5 @@
 const express = require("express");
-const passport = require('passport');
+const passport = require("passport");
 const router = express.Router();
 const User = require("../models/User");
 
@@ -7,17 +7,28 @@ const User = require("../models/User");
 const bcrypt = require("bcrypt");
 const bcryptSalt = 10;
 
-
 router.get("/login", (req, res, next) => {
-  res.render("auth/login", { "message": req.flash("error") });
+  res.render("auth/login", { message: req.flash("error") });
 });
 
-router.post("/login", passport.authenticate("local", {
-  successRedirect: "/",
-  failureRedirect: "/auth/login",
-  failureFlash: true,
-  passReqToCallback: true
-}));
+router.post("/login", (req, res) => {
+  passport.authenticate("local", (err, user) => {
+    if (err) {
+      return res.status(500).json({ message: "Error while authenticating" });
+    }
+    if (!user) {
+      return res.status(400).json({ message: "Wrong credentials" });
+    }
+    req.login(user, err => {
+      if (err) {
+        return res
+          .status(500)
+          .json({ message: "Error while attempting to login" });
+      }
+      return res.json(user);
+    });
+  })(req, res);
+});
 
 router.get("/signup", (req, res, next) => {
   res.render("auth/signup");
@@ -26,38 +37,53 @@ router.get("/signup", (req, res, next) => {
 router.post("/signup", (req, res, next) => {
   const username = req.body.username;
   const password = req.body.password;
-  if (username === "" || password === "") {
-    res.render("auth/signup", { message: "Indicate username and password" });
-    return;
+
+  if (username === "") {
+    return res.status(400).json({ message: "Your email cannot be empty" });
+  }
+  if (!password || password.length < 8) {
+    return res
+      .status(400)
+      .json({ message: "Your password must be at least 8 characters" });
   }
 
-  User.findOne({ username }, "username", (err, user) => {
+  User.findOne({ username }, "username", async (err, user) => {
     if (user !== null) {
-      res.render("auth/signup", { message: "The username already exists" });
-      return;
+      return res
+        .status(400)
+        .json({ message: "An account for this email already exists" });
     }
 
-    const salt = bcrypt.genSaltSync(bcryptSalt);
-    const hashPass = bcrypt.hashSync(password, salt);
+    const salt = await bcrypt.genSalt(bcryptSalt);
+    const hashPass = await bcrypt.hash(password, salt);
 
-    const newUser = new User({
-      username,
-      password: hashPass
-    });
-
-    newUser.save()
-      .then(() => {
-        res.redirect("/");
-      })
-      .catch(err => {
-        res.render("auth/signup", { message: "Something went wrong" });
-      })
+    return User.create({ username: username, password: hashPass }).then(
+      dbUser => {
+        // Login the user on signup
+        req.login(dbUser, err => {
+          if (err) {
+            return res
+              .status(500)
+              .json({ message: "Error while attempting to login" });
+          }
+          res.json(dbUser);
+        });
+      }
+    );
+  }).catch(err => {
+    res.json(err);
   });
 });
 
-router.get("/logout", (req, res) => {
+router.delete("/logout", (req, res) => {
   req.logout();
-  res.redirect("/");
+  res.json({ message: "Logout successful" });
+});
+
+// checks if the user has an active session
+// GET /auth/loggedin
+router.get("/loggedin", (req, res) => {
+  res.json(req.user);
 });
 
 module.exports = router;
